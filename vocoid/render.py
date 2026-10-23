@@ -24,7 +24,7 @@ from vocoid.engine import CharRevealed, SfxHit, Typewriter, VoiceHit
 from vocoid.synth.bake import save_bank, to_int16
 from vocoid.synth.envelope import swell
 from vocoid.synth.sfx import SFX, get_sfx
-from vocoid.synth.syllable import hit_audio
+from vocoid.synth.phrase import group_phrases, synth_phrase
 from vocoid.voice import CAST, Voice, get_voice
 
 MODES = ("voice", "beep", "random-beep")
@@ -51,14 +51,16 @@ def render_line(line: str, voice: Voice, sr: int = SR, speed: float = 1.0,
         if isinstance(e, CharRevealed) and mode != "voice" and e.char.isalnum():
             freq = 520.0 if mode == "beep" else rng.uniform(250, 950)
             clips.append((start, beep(freq, sr)))
-        elif isinstance(e, VoiceHit) and mode == "voice":
-            clips.append((start, hit_audio(e, voice, tw.text, sr)))
         elif isinstance(e, SfxHit):
             if e.name in SFX:
                 clips.append((start, get_sfx(e.name, sr)))
             else:
                 print(f"warning: unknown sfx {{{e.name}}}", file=sys.stderr)
-    end = max((s + len(c) for s, c in clips), default=0)
+    if mode == "voice":
+        for group in group_phrases([e for e in events if isinstance(e, VoiceHit)]):
+            t0, y = synth_phrase(group, voice, tw.text, sr)
+            clips.append((int(round(t0 * sr)), y))
+    end =max((s + len(c) for s, c in clips), default=0)
     out = np.zeros(end + int(tail * sr), dtype=np.float32)
     for s, c in clips:
         out[s:s + len(c)] += c

@@ -35,6 +35,7 @@ class VoiceHit:
     glide_from: float | None   # previous syllable's pitch in the same phrase, else None
     vowel_end: str | None = None  # diphthong target ("right" = ah -> ee)
     emotion: Emotion = NEUTRAL
+    phrase: int = 0               # syllables of one phrase are rendered as one continuous voice
 
 
 @dataclass(frozen=True)
@@ -84,9 +85,16 @@ class Typewriter:
             # pitch flows on within a phrase; after punctuation it starts fresh
             glide = prev[1] if prev is not None and prev[0] == note.phrase else None
             hits[i] = VoiceHit(snd.time, i, note.vowel, ratio, note.gain * v.gain * mood.gain,
-                               snd.duration, glide, by_index[i].vowel_end, mood)
+                               snd.duration, glide, by_index[i].vowel_end, mood, note.phrase)
             prev = (note.phrase, ratio)
         return hits, char_times
+
+    def phrase_hits(self, phrase: int) -> list[VoiceHit]:
+        return sorted((h for h in self.hits.values() if h.phrase == phrase), key=lambda h: h.time)
+
+    @property
+    def phrases(self) -> list[int]:
+        return sorted({h.phrase for h in self.hits.values()})
 
     @property
     def done(self) -> bool:

@@ -83,8 +83,12 @@ def main(argv: list[str] | None = None) -> int:
         line = SCRIPT[line_i][1]
         if mood_i:  # override: drop the script's mood tags, use the chosen mood
             line = re.sub(r"\{mood:[^}]*\}", "", line)
-            return Typewriter(line, v, speed, moods[mood_i])
-        return Typewriter(line, v, speed)
+            new = Typewriter(line, v, speed, moods[mood_i])
+        else:
+            new = Typewriter(line, v, speed)
+        player.prepare(new)  # render the voice before the clock starts, so text and voice stay in sync
+        clock.tick()         # drop the render time from the next frame's dt
+        return new
 
     tw = start(voice)
     spans = wrap_spans(tw.text, font, BOX[2] - 40)
@@ -102,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
                 elif ev.key in (pygame.K_SPACE, pygame.K_RETURN):
                     if not tw.done:
                         tw.skip()
+                        player.stop()  # no letters left, so the voice stops
                     else:
                         line_i = (line_i + 1) % len(SCRIPT)
                         tw = start(CAST[SCRIPT[line_i][0]])
@@ -123,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
 
         events = tw.update(dt)
         hits += sum(isinstance(e, VoiceHit) for e in events)
-        player.handle(events, voice, tw.text, MODES[mode_i])
+        player.handle(events, tw, MODES[mode_i])
 
         screen.fill((18, 16, 28))
         pygame.draw.rect(screen, (40, 36, 62), BOX, border_radius=10)

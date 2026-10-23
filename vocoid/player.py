@@ -1,4 +1,8 @@
-"""Live playback through pygame's mixer. Many channels so overlapping syllables don't cut each other."""
+"""Live playback through pygame's mixer.
+
+Each phrase is one continuous sound. It is rendered when the line starts (prepare) and starts
+playing the moment its first syllable's letter appears, so voice and text stay locked together.
+"""
 
 from __future__ import annotations
 
@@ -6,12 +10,11 @@ import numpy as np
 import pygame
 
 from vocoid import SR
-from vocoid.engine import CharRevealed, Event, SfxHit, VoiceHit
+from vocoid.engine import CharRevealed, Event, SfxHit, Typewriter, VoiceHit
 from vocoid.render import beep
 from vocoid.synth.bake import to_int16
+from vocoid.synth.phrase import synth_phrase
 from vocoid.synth.sfx import SFX, get_sfx
-from vocoid.synth.syllable import hit_audio
-from vocoid.voice import Voice
 
 HEADROOM = 0.65  # loud notes (shouts) can go above 1.0 gain
 
@@ -24,6 +27,8 @@ class Player:
         self.sr, _, self.out_channels = pygame.mixer.get_init()
         pygame.mixer.set_num_channels(channels)
         self._cache: dict[tuple, pygame.mixer.Sound] = {}
+        self._phrases: dict[int, pygame.mixer.Sound] = {}
+        self._tw: Typewriter | None = None
         self._rng = np.random.default_rng(0)
 
     def _sound(self, samples: np.ndarray) -> pygame.mixer.Sound:
@@ -38,12 +43,22 @@ class Player:
             snd = self._cache[key] = self._sound(make())
         snd.play()
 
-    def handle(self, events: list[Event], voice: Voice, line: str, mode: str = "voice") -> None:
-        """line = the typewriter's display text (seeds each syllable so a line always sounds the same)."""
+    def prepare(self, tw: Typewriter) -> None:
+        """Render every phrase of a new line up front (stops whatever was playing)."""
+        self.stop()
+        self._tw = tw
+        self._phrases = {}
+        for p in tw.phrases:
+            _, y = synth_phrase(tw.phrase_hits(p), tw.voice, tw.text, self.sr)
+            self._phrases[p] = self._sound(y)
+
+    def handle(self, events: list[Event], tw: Typewriter, mode: str = "voice") -> None:
+        if tw is not self._tw:
+            self.prepare(tw)
         for e in events:
             if isinstance(e, VoiceHit) and mode == "voice":
-                # synthesized fresh each time: pitch glides and never repeats a recording
-                self._sound(hit_audio(e, voice, line, self.sr)).play()
+                if e.glide_from is None and e.phrase in self._phrases:  # phrase's first syllable
+                    self._phrases[e.phrase].play()
             elif isinstance(e, CharRevealed) and mode != "voice" and e.char.isalnum():
                 freq = 520 if mode == "beep" else int(self._rng.uniform(250, 950))
                 self._play_cached(("beep", freq), lambda: beep(freq, self.sr))
@@ -51,4 +66,5 @@ class Player:
                 self._play_cached(("sfx", e.name), lambda: get_sfx(e.name, self.sr))
 
     def stop(self) -> None:
+        """Silence everything (used on skip: no letters left, so the voice stops)."""
         pygame.mixer.stop()

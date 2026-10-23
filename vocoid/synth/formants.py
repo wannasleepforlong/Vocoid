@@ -23,7 +23,8 @@ BANDWIDTHS = (80.0, 100.0, 140.0)
 HIGHER_FORMANTS = ((3500.0, 200.0), (4500.0, 250.0))
 
 NEUTRAL_F2 = 1150.0  # where F2 drifts when the mouth barely opens
-BLOCK = 32           # samples per filter update when formants move
+BLOCK = 32           # samples per filter update for a single-syllable diphthong
+TRACK_FRAME = 0.005  # seconds per filter update for phrase-long formant tracks
 
 
 def resonator_coefs(freq: float, bw: float, sr: int) -> tuple[float, float, float]:
@@ -60,6 +61,24 @@ def formants_for(vowel: str, tube_scale: float = 1.0, mouth_closed: float = 0.0,
             f = min(f, 0.45 * sr)
         out.append((f, bw))
     return out
+
+
+def apply_tract_tracks(x: np.ndarray, freqs: np.ndarray, bws: np.ndarray, sr: int) -> np.ndarray:
+    """Cascade resonators whose formants follow per-sample tracks (n x 5), so the mouth can move
+    continuously. Coefficients update every 5 ms (like classic Klatt synthesizers); tracks are
+    already smoothed far slower than that. Filter state carries across blocks."""
+    n, nf = freqs.shape
+    y = np.empty(n)
+    zi = [np.zeros(2) for _ in range(nf)]
+    step = max(16, int(TRACK_FRAME * sr))
+    for s in range(0, n, step):
+        blk = x[s:s + step]
+        mid = min(n - 1, s + step // 2)
+        for k in range(nf):
+            a, b, c = resonator_coefs(freqs[mid, k], bws[mid, k], sr)
+            blk, zi[k] = lfilter([a], [1, -b, -c], blk, zi=zi[k])
+        y[s:s + step] = blk
+    return y
 
 
 def apply_tract(x: np.ndarray, vowel: str, sr: int, tube_scale: float = 1.0,

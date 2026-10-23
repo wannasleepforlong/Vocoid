@@ -1,4 +1,5 @@
-"""One syllable, synthesized live with a moving pitch.
+"""One syllable, synthesized live with a moving pitch (vowel bank, tests, inspection).
+Playback renders whole phrases as one continuous voice instead: see phrase.py.
 
 Why live instead of pitch-shifting a baked sample:
   - pitch can glide in from the last syllable and sag a little, like real speech
@@ -8,8 +9,6 @@ Why live instead of pitch-shifting a baked sample:
 """
 
 from __future__ import annotations
-
-import zlib
 
 import numpy as np
 
@@ -76,12 +75,3 @@ def synth_syllable(vowel: str, voice: Voice, ratio: float = 1.0, duration: float
     if envelope:
         y *= swell(n, sr, min(ATTACK * e.attack, duration * 0.4), min(RELEASE, duration * 0.4))
     return y.astype(np.float32)
-
-
-def hit_audio(hit, voice: Voice, line: str, sr: int = SR) -> np.ndarray:
-    """Audio for one engine VoiceHit. Seeded by line + letter, so a line always sounds the same."""
-    seed = [zlib.crc32(line.encode()), hit.index, zlib.crc32(voice.name.encode())]
-    y = synth_syllable(hit.vowel, voice, hit.ratio, hit.duration, sr,
-                       np.random.default_rng(seed), hit.time, hit.glide_from,
-                       vowel_end=hit.vowel_end, emotion=hit.emotion)
-    return y * hit.gain

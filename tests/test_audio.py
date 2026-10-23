@@ -141,7 +141,7 @@ def test_bank():
 
 def test_bank_size_small():
     total = sum(len(v) * 2 for voice in CAST.values() for v in get_bank(voice).values())
-    assert total < 800_000  # export-only bank (playback is live): 11 vowels x 6 voices stays small
+    assert total / len(CAST) < 130_000  # export-only bank (playback is live): ~120 KB per voice
 
 
 def test_render_deterministic_and_audible():

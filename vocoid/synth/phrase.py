@@ -81,7 +81,8 @@ def synth_phrase(hits: list, voice: Voice, line: str = "", sr: int = SR) -> tupl
 
     # mouth tracks: each syllable's vowel, sliding to its second vowel for diphthongs
     def table(vowel_of):
-        rows = [formants_for(vowel_of(h), voice.tube_scale, voice.mouth_closed, sr) for h in hits]
+        rows = [formants_for(vowel_of(h), voice.tube_scale, voice.mouth_closed, sr, voice.kind)
+                for h in hits]
         return np.array([[f for f, _ in r] for r in rows]), np.array([[b for _, b in r] for r in rows])
 
     fs, bs = table(lambda h: h.vowel)
@@ -110,7 +111,8 @@ def synth_phrase(hits: list, voice: Voice, line: str = "", sr: int = SR) -> tupl
 
     # source -> mouth
     src, flow = buzz(f0, sr, voice.jitter * e.jitter, voice.shimmer, voice.flutter, rng,
-                     tension=e.tension)
+                     tension=max(-1.0, min(1.0, voice.tension + e.tension)),
+                     roughness=voice.roughness)
     src /= np.sqrt(np.mean(src ** 2)) + 1e-12
     breath = voice.breath * e.breath
     if breath:

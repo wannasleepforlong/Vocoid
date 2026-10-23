@@ -6,7 +6,9 @@ No recordings. Every syllable is built live from math (glottal buzz + vocal-trac
 - Real English pronunciation (CMU dictionary) picks vowels, syllables and stress; made-up names use letter rules
 - Speech-like rhythm: pauses only at punctuation, words in a phrase run together
 - Human pitch: smooth glides, natural sag, jitter/shimmer, tune from punctuation (`?` rises, `!` starts high, `...` fades, CAPS shouts)
-- Voices = pitch + tube length + quirks: guard, lady, child, pirate, elder, cat
+- Voices: guard, lady, child, pirate, elder, granny, cat. Each uses measured vowel tables for
+  men, women or children (Peterson & Barney), plus its own voice quality: firm vs. breathy,
+  hoarse roughness and wobble for old voices
 - Emotions: neutral, happy, sad, angry, scared, surprised, tired. Each changes pitch level and range,
   speed, loudness, breathiness, tremor and voice tension (soft/dark vs. pressed/bright)
 - Inline tags: `{mood:sad}`, `{mood:happy:0.5}` (strength), switchable mid-line; sound effects at an

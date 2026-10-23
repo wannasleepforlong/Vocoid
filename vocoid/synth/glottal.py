@@ -80,12 +80,13 @@ def tension_shape(tension: float) -> tuple[float, float]:
 
 def buzz(f0, sr: int, jitter: float = 0.006, shimmer: float = 0.03, flutter: float = 0.008,
          rng: np.random.Generator | None = None, duration: float | None = None,
-         tension: float = 0.0):
+         tension: float = 0.0, roughness: float = 0.0):
     """Glottal source following a pitch curve.
 
     f0: Hz per output sample (array), or a constant with `duration`.
     jitter: per-cycle pitch randomness. shimmer: per-cycle loudness randomness.
     flutter: slow pitch drift (~5 Hz), the natural unsteadiness of a held note.
+    tension: -1 lax/soft .. +1 pressed/harsh. roughness: 0..1 hoarseness (alternating cycles).
     Returns (source, flow): source = the sharp buzz we hear, flow = airflow (0..1, used to pulse breath).
     """
     rng = rng or np.random.default_rng(0)
@@ -101,11 +102,18 @@ def buzz(f0, sr: int, jitter: float = 0.006, shimmer: float = 0.03, flutter: flo
 
     # per-cycle jitter: find cycle numbers, then give each cycle its own small pitch error
     cyc = np.floor(np.cumsum(f / hr)).astype(int)
-    f = f * (1 + jitter * rng.standard_normal(cyc[-1] + 2))[cyc]
+    per_cycle = 1 + jitter * rng.standard_normal(cyc[-1] + 2)
+    if roughness:
+        # hoarse voice: every other cycle a bit longer and weaker (a growl an octave down)
+        per_cycle *= 1 + 0.3 * roughness * (-1.0) ** np.arange(len(per_cycle))
+    f = f * per_cycle[cyc]
     phase = np.cumsum(f / hr)
     cyc = np.floor(phase).astype(int)
     flow = glottal_flow(phase - cyc, *tension_shape(tension))
-    flow *= (1 + shimmer * rng.standard_normal(cyc[-1] + 2))[cyc]
+    amp = 1 + shimmer * rng.standard_normal(cyc[-1] + 2)
+    if roughness:
+        amp *= 1 - roughness * (np.arange(len(amp)) % 2)
+    flow *= amp[cyc]
 
     src = np.diff(flow, prepend=0.0)  # flow derivative = the buzz
     src = spectral_tilt(resample_poly(src, 1, OVERSAMPLE)[:n], sr, tension)

@@ -1,30 +1,59 @@
-"""The tube: throat + mouth boost three pitch bands (formants). Which bands = which vowel."""
+"""The tube: throat + mouth boost pitch bands (formants). Which bands = which vowel.
+
+Men, women and children get their own measured vowel tables. A shorter tube is not just a uniform
+shift: e.g. a woman's "cat" F1 is ~30% above a man's, her "father" F1 only ~16%. Getting this
+right is a big part of why a voice reads as a woman or a child rather than "a man, pitched up".
+"""
 
 import numpy as np
 from scipy.signal import lfilter
 
-# F1, F2, F3 in Hz. Adult male averages from classic speech research (Peterson & Barney 1952 style).
-VOWELS: dict[str, tuple[float, float, float]] = {
-    "ah": (730, 1090, 2440),   # father
-    "ae": (660, 1720, 2410),   # cat
-    "eh": (530, 1840, 2480),   # bed
-    "ih": (390, 1990, 2550),   # sit
-    "ee": (270, 2290, 3010),   # see
-    "aw": (570, 840, 2410),    # thought
-    "oh": (500, 900, 2400),    # go
-    "uu": (440, 1020, 2240),   # book
-    "ooh": (300, 870, 2240),   # boot
-    "uh": (640, 1190, 2390),   # but
-    "er": (490, 1350, 1690),   # her
+# F1, F2, F3 in Hz: Peterson & Barney (1952) averages per speaker group.
+# "oh" (go) is not in that study: scaled from "aw" with the same group ratios.
+VOWELS_BY_KIND: dict[str, dict[str, tuple[float, float, float]]] = {
+    "man": {
+        "ee": (270, 2290, 3010), "ih": (390, 1990, 2550), "eh": (530, 1840, 2480),
+        "ae": (660, 1720, 2410), "ah": (730, 1090, 2440), "aw": (570, 840, 2410),
+        "oh": (500, 900, 2400), "uu": (440, 1020, 2240), "ooh": (300, 870, 2240),
+        "uh": (640, 1190, 2390), "er": (490, 1350, 1690),
+    },
+    "woman": {
+        "ee": (310, 2790, 3310), "ih": (430, 2480, 3070), "eh": (610, 2330, 2990),
+        "ae": (860, 2050, 2850), "ah": (850, 1220, 2810), "aw": (590, 920, 2710),
+        "oh": (520, 990, 2700), "uu": (470, 1160, 2680), "ooh": (370, 950, 2670),
+        "uh": (760, 1400, 2780), "er": (500, 1640, 1960),
+    },
+    "child": {
+        "ee": (370, 3200, 3730), "ih": (530, 2730, 3600), "eh": (690, 2610, 3570),
+        "ae": (1010, 2320, 3320), "ah": (1030, 1370, 3170), "aw": (680, 1060, 3180),
+        "oh": (600, 1135, 3165), "uu": (560, 1410, 3310), "ooh": (430, 1170, 3260),
+        "uh": (850, 1590, 3360), "er": (560, 1820, 2160),
+    },
 }
-BANDWIDTHS = (80.0, 100.0, 140.0)
-# F4, F5: roughly the same for every vowel. Without them everything above ~3 kHz collapses
-# (three cascaded resonators roll off steeply) and the voice sounds muffled.
-HIGHER_FORMANTS = ((3500.0, 200.0), (4500.0, 250.0))
+VOWELS = VOWELS_BY_KIND["man"]  # vowel names; kept for callers that only need the list
+KINDS = tuple(VOWELS_BY_KIND)
 
-NEUTRAL_F2 = 1150.0  # where F2 drifts when the mouth barely opens
+BANDWIDTHS = (80.0, 100.0, 140.0)
+# Smaller, softer tracts damp resonances more: wider bands (less "ringing", more breathy).
+BANDWIDTH_SCALE = {"man": 1.0, "woman": 1.15, "child": 1.3}
+# F4, F5: roughly the same for every vowel, scaled with tract size. Without them everything
+# above ~3 kHz collapses (cascaded resonators roll off steeply) and the voice sounds muffled.
+HIGHER_FORMANTS = {
+    "man": ((3500.0, 200.0), (4500.0, 250.0)),
+    "woman": ((4000.0, 230.0), (5000.0, 290.0)),
+    "child": ((4500.0, 260.0), (5600.0, 320.0)),
+}
+
+NEUTRAL_F2 = 1150.0  # where F2 drifts when the mouth barely opens (man; scaled for others)
 BLOCK = 32           # samples per filter update for a single-syllable diphthong
 TRACK_FRAME = 0.005  # seconds per filter update for phrase-long formant tracks
+
+# Presence: a five-pole cascade loses far too much above ~2 kHz compared with a real voice
+# (Klatt's "higher-pole correction" problem). Without this, upper formants, which carry who is
+# speaking, are 15-40 dB too quiet and every voice sounds like the same muffled hum.
+PRE_EMPHASIS = 0.8
+SHELF_HZ = 3000.0
+SHELF_DB = 15.0
 
 
 def resonator_coefs(freq: float, bw: float, sr: int) -> tuple[float, float, float]:
@@ -40,23 +69,40 @@ def resonator(x: np.ndarray, freq: float, bw: float, sr: int) -> np.ndarray:
     return lfilter([a], [1, -b, -c], x)
 
 
-def formants_for(vowel: str, tube_scale: float = 1.0, mouth_closed: float = 0.0,
-                 sr: int | None = None) -> list[tuple[float, float]]:
-    """Formant (freq, bandwidth) list for a vowel and tract shape.
+def presence(y: np.ndarray, sr: int) -> np.ndarray:
+    """Pre-emphasis + high shelf (RBJ, slope 1): brings upper formants up to speech-like levels."""
+    y = lfilter([1, -PRE_EMPHASIS], [1], y)
+    A = 10 ** (SHELF_DB / 40)
+    w = 2 * np.pi * min(SHELF_HZ, 0.4 * sr) / sr
+    alpha = np.sin(w) / 2 * np.sqrt(2)
+    c, sq = np.cos(w), np.sqrt(A)
+    b = [A * ((A + 1) + (A - 1) * c + 2 * sq * alpha), -2 * A * ((A - 1) + (A + 1) * c),
+         A * ((A + 1) + (A - 1) * c - 2 * sq * alpha)]
+    a = [(A + 1) - (A - 1) * c + 2 * sq * alpha, 2 * ((A - 1) - (A + 1) * c),
+         (A + 1) - (A - 1) * c - 2 * sq * alpha]
+    return lfilter(b, a, y)
 
-    tube_scale > 1 = shorter tube (woman, child): all bands move up together.
-    mouth_closed 0..1 = mutter: F1 drops, F2 pulls to neutral, bands get wider (muffled).
+
+def formants_for(vowel: str, tube_scale: float = 1.0, mouth_closed: float = 0.0,
+                 sr: int | None = None, kind: str = "man") -> list[tuple[float, float]]:
+    """Formant (freq, bandwidth) list for a vowel, speaker kind and tract shape.
+
+    kind: "man", "woman" or "child" (measured tables). tube_scale fine-tunes size within a kind
+    (>1 = smaller). mouth_closed 0..1 = mutter: F1 drops, F2 pulls to neutral, bands widen.
     """
-    f1, f2, f3 = VOWELS[vowel]
+    table = VOWELS_BY_KIND[kind]
+    f1, f2, f3 = table[vowel]
     m = mouth_closed
+    neutral = NEUTRAL_F2 * table["uh"][1] / VOWELS_BY_KIND["man"]["uh"][1]
     f1 *= 1 - 0.35 * m
-    f2 += (NEUTRAL_F2 - f2) * 0.45 * m
+    f2 += (neutral - f2) * 0.45 * m
     f3 *= 1 - 0.05 * m
+    bw_scale = BANDWIDTH_SCALE[kind]
     out = []
-    bands = list(zip((f1, f2, f3), BANDWIDTHS)) + list(HIGHER_FORMANTS)
+    bands = list(zip((f1, f2, f3), BANDWIDTHS)) + list(HIGHER_FORMANTS[kind])
     for f, bw in bands:
         f *= tube_scale
-        bw *= (1 + 0.8 * m) * (0.5 + 0.5 * tube_scale)
+        bw *= bw_scale * (1 + 0.8 * m) * (0.5 + 0.5 * tube_scale)
         if sr is not None:
             f = min(f, 0.45 * sr)
         out.append((f, bw))
@@ -78,25 +124,25 @@ def apply_tract_tracks(x: np.ndarray, freqs: np.ndarray, bws: np.ndarray, sr: in
             a, b, c = resonator_coefs(freqs[mid, k], bws[mid, k], sr)
             blk, zi[k] = lfilter([a], [1, -b, -c], blk, zi=zi[k])
         y[s:s + step] = blk
-    return y
+    return presence(y, sr)
 
 
 def apply_tract(x: np.ndarray, vowel: str, sr: int, tube_scale: float = 1.0,
                 mouth_closed: float = 0.0, vowel_end: str | None = None,
-                glide: tuple[float, float] = (0.3, 0.8)) -> np.ndarray:
+                glide: tuple[float, float] = (0.3, 0.8), kind: str = "man") -> np.ndarray:
     """Pass the buzz through five cascaded resonators (F1-F3 = vowel, F4-F5 = presence).
 
     With vowel_end, the mouth slides from vowel to vowel_end between glide[0] and glide[1]
     of the sound (e.g. "right" = ah -> ee). Filters update every BLOCK samples, keeping state.
     """
-    start = formants_for(vowel, tube_scale, mouth_closed, sr)
+    start = formants_for(vowel, tube_scale, mouth_closed, sr, kind)
     if vowel_end is None or vowel_end == vowel:
         y = x
         for f, bw in start:
             y = resonator(y, f, bw, sr)
-        return y
+        return presence(y, sr)
 
-    end = formants_for(vowel_end, tube_scale, mouth_closed, sr)
+    end = formants_for(vowel_end, tube_scale, mouth_closed, sr, kind)
     n = len(x)
     y = np.empty(n)
     zi = [np.zeros(2) for _ in start]
@@ -112,4 +158,4 @@ def apply_tract(x: np.ndarray, vowel: str, sr: int, tube_scale: float = 1.0,
             a, b, c = resonator_coefs(f, bw, sr)
             blk, zi[k] = lfilter([a], [1, -b, -c], blk, zi=zi[k])
         y[s:s + BLOCK] = blk
-    return y
+    return presence(y, sr)

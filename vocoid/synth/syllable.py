@@ -63,14 +63,16 @@ def synth_syllable(vowel: str, voice: Voice, ratio: float = 1.0, duration: float
     n = max(16, int(duration * sr))
     f0 = pitch_curve(voice, ratio, n, sr, t0, glide_from, steady, e)
     src, flow = buzz(f0, sr, voice.jitter * e.jitter, voice.shimmer,
-                     0.0 if steady else voice.flutter, rng, tension=e.tension)
+                     0.0 if steady else voice.flutter, rng,
+                     tension=max(-1.0, min(1.0, voice.tension + e.tension)),
+                     roughness=voice.roughness)
     src /= np.sqrt(np.mean(src ** 2)) + 1e-12
     breath = voice.breath * e.breath
     if breath:
         # breath leaks mostly while the folds are open, so it pulses with the voice
         noise = rng.standard_normal(n) * (0.3 + 0.7 * flow / (flow.max() + 1e-12))
         src = src + breath * noise / (np.sqrt(np.mean(noise ** 2)) + 1e-12)
-    y = apply_tract(src, vowel, sr, voice.tube_scale, voice.mouth_closed, vowel_end)
+    y = apply_tract(src, vowel, sr, voice.tube_scale, voice.mouth_closed, vowel_end, kind=voice.kind)
     y *= TARGET_RMS / (np.sqrt(np.mean(y ** 2)) + 1e-12)
     if envelope:
         y *= swell(n, sr, min(ATTACK * e.attack, duration * 0.4), min(RELEASE, duration * 0.4))

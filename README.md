@@ -7,7 +7,10 @@ No recordings. Every syllable is built live from math (glottal buzz + vocal-trac
 - Speech-like rhythm: pauses only at punctuation, words in a phrase run together
 - Human pitch: smooth glides, natural sag, jitter/shimmer, tune from punctuation (`?` rises, `!` starts high, `...` fades, CAPS shouts)
 - Voices = pitch + tube length + quirks: guard, lady, child, pirate, elder, cat
-- Inline sound effects at an exact letter: `Mrrow.{purr} Hello!`
+- Emotions: neutral, happy, sad, angry, scared, surprised, tired. Each changes pitch level and range,
+  speed, loudness, breathiness, tremor and voice tension (soft/dark vs. pressed/bright)
+- Inline tags: `{mood:sad}`, `{mood:happy:0.5}` (strength), switchable mid-line; sound effects at an
+  exact letter: `Mrrow.{purr} Hello!`
 
 ## Setup
 
@@ -21,9 +24,12 @@ pip install -r requirements.txt
 python demo.py                                                   # live text box
 python -m vocoid.render "Is that you?" --voice elder -o out.wav  # one line -> WAV
 python -m vocoid.render "Hello there, friend." --cast -o cast.wav # every voice
+python -m vocoid.render "I lost it all." --voice lady --mood sad -o sad.wav
+python -m vocoid.render "You did WHAT?" --moods -o moods.wav      # every mood back to back
+python -m vocoid.render "{mood:happy}Great news! {mood:sad}But the cat left." -o mix.wav
 python -m pytest -q
 ```
 
-Demo keys: Space skip/next, 1-6 voice, R replay, M mode (voice / beep baselines), `-` / `=` speed.
+Demo keys: Space skip/next, 1-6 voice, E mood, R replay, M mode (voice / beep baselines), `-` / `=` speed.
 
 See [PLAN.md](PLAN.md) for the design and roadmap.

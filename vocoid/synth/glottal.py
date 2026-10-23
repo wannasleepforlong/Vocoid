@@ -6,7 +6,7 @@ don't alias into metallic tones.
 """
 
 import numpy as np
-from scipy.signal import resample_poly
+from scipy.signal import lfilter, resample_poly
 
 OVERSAMPLE = 4
 OPEN_Q = 0.5    # fraction of a cycle the folds spend opening
@@ -37,8 +37,50 @@ def smooth_noise(n: int, sr: float, rate_hz: float, rng: np.random.Generator) ->
     return pts[i] * (1 - w) + pts[i + 1] * w
 
 
+TILT_HZ = 3000.0
+LAX_TILT_DB = 15.0    # fully lax voice: this much softer at 3 kHz (folds close gently)
+PRESSED_TILT_DB = 6.0  # fully pressed voice: this much brighter at 3 kHz
+
+
+def _solve(fn, lo: float, hi: float, target: float) -> float:
+    """Bisection for an increasing fn."""
+    for _ in range(50):
+        mid = 0.5 * (lo + hi)
+        if fn(mid) < target:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
+
+
+def spectral_tilt(x: np.ndarray, sr: int, tension: float) -> np.ndarray:
+    """Lax voices lose high frequencies, pressed voices gain them (like Klatt's tilt parameter).
+    DC gain stays 1, so only the balance of lows vs. highs changes."""
+    if abs(tension) < 1e-3:
+        return x
+    w = 2 * np.pi * TILT_HZ / sr
+    if tension < 0:
+        want = 10 ** (-LAX_TILT_DB * min(1.0, -tension) / 20)
+        # one-pole lowpass y = (1-b) x + b y[-1]; attenuation at w grows with b
+        att = lambda b: -abs((1 - b) / (1 - b * np.exp(-1j * w)))
+        b = _solve(att, 0.0, 0.999, -want)
+        return lfilter([1 - b], [1, -b], x)
+    want = 10 ** (PRESSED_TILT_DB * min(1.0, tension) / 20)
+    # y = x + k (x - x[-1]); boost at w grows with k
+    gain = lambda k: abs(1 + k * (1 - np.exp(-1j * w)))
+    k = _solve(gain, 0.0, 10.0, want)
+    return lfilter([1 + k, -k], [1], x)
+
+
+def tension_shape(tension: float) -> tuple[float, float]:
+    """-1 lax (soft, dark) .. +1 pressed (harsh, bright) -> (open_q, close_q)."""
+    t = max(-1.0, min(1.0, tension))
+    return OPEN_Q - 0.1 * t, max(0.04, CLOSE_Q - 0.06 * t)
+
+
 def buzz(f0, sr: int, jitter: float = 0.006, shimmer: float = 0.03, flutter: float = 0.008,
-         rng: np.random.Generator | None = None, duration: float | None = None):
+         rng: np.random.Generator | None = None, duration: float | None = None,
+         tension: float = 0.0):
     """Glottal source following a pitch curve.
 
     f0: Hz per output sample (array), or a constant with `duration`.
@@ -62,11 +104,11 @@ def buzz(f0, sr: int, jitter: float = 0.006, shimmer: float = 0.03, flutter: flo
     f = f * (1 + jitter * rng.standard_normal(cyc[-1] + 2))[cyc]
     phase = np.cumsum(f / hr)
     cyc = np.floor(phase).astype(int)
-    flow = glottal_flow(phase - cyc)
+    flow = glottal_flow(phase - cyc, *tension_shape(tension))
     flow *= (1 + shimmer * rng.standard_normal(cyc[-1] + 2))[cyc]
 
     src = np.diff(flow, prepend=0.0)  # flow derivative = the buzz
-    src = resample_poly(src, 1, OVERSAMPLE)[:n]
+    src = spectral_tilt(resample_poly(src, 1, OVERSAMPLE)[:n], sr, tension)
     flow = resample_poly(flow, 1, OVERSAMPLE)[:n]
     src /= np.max(np.abs(src)) + 1e-12
     return src, np.clip(flow, 0, None)

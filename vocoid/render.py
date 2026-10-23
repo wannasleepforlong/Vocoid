@@ -3,6 +3,9 @@
     python -m vocoid.render "Sister Agnes, is that you?" --voice elder -o out.wav
     python -m vocoid.render "Hello there, friend." --cast -o cast.wav
     python -m vocoid.render "Hello there." --mode random-beep -o chaos.wav
+    python -m vocoid.render "I lost it all." --voice lady --mood sad -o sad.wav
+    python -m vocoid.render "You did WHAT?" --moods -o moods.wav     # every mood back to back
+    python -m vocoid.render "{mood:happy}Great news! {mood:sad}But the cat left." -o mix.wav
     python -m vocoid.render --export-bank banks/
 """
 
@@ -16,6 +19,7 @@ import numpy as np
 from scipy.io import wavfile
 
 from vocoid import SR
+from vocoid.emotion import EMOTIONS
 from vocoid.engine import CharRevealed, SfxHit, Typewriter, VoiceHit
 from vocoid.synth.bake import save_bank, to_int16
 from vocoid.synth.envelope import swell
@@ -33,11 +37,12 @@ def beep(freq: float, sr: int = SR, duration: float = 0.04) -> np.ndarray:
 
 
 def render_line(line: str, voice: Voice, sr: int = SR, speed: float = 1.0,
-                mode: str = "voice", tail: float = 0.4) -> np.ndarray:
+                mode: str = "voice", tail: float = 0.4, mood: str | None = None,
+                mood_amount: float = 1.0) -> np.ndarray:
     """Simulate the typewriter and mix every sound at its exact sample offset."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
-    tw = Typewriter(line, voice, speed)
+    tw = Typewriter(line, voice, speed, mood, mood_amount)
     events = tw.run_all()
     rng = np.random.default_rng(zlib.crc32(line.encode()))
     clips: list[tuple[int, np.ndarray]] = []
@@ -71,6 +76,14 @@ def render_cast(line: str, voices: list[Voice], sr: int = SR, gap: float = 0.35,
     return np.concatenate(parts)
 
 
+def render_moods(line: str, voice: Voice, sr: int = SR, gap: float = 0.5, **kw) -> np.ndarray:
+    silence = np.zeros(int(gap * sr), dtype=np.float32)
+    parts = []
+    for name in EMOTIONS:
+        parts += [render_line(line, voice, sr, mood=name, **kw), silence]
+    return np.concatenate(parts)
+
+
 def write_wav(path: str, samples: np.ndarray, sr: int = SR) -> None:
     wavfile.write(path, sr, to_int16(samples))
 
@@ -82,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cast", action="store_true", help="same line through every voice, back to back")
     ap.add_argument("--mode", choices=MODES, default="voice", help="beep modes = the naive baselines")
     ap.add_argument("--speed", type=float, default=1.0, help="talking speed, 1.0 = normal")
+    ap.add_argument("--mood", choices=list(EMOTIONS), help="mood for the whole line ({mood:x} tags still override)")
+    ap.add_argument("--mood-amount", type=float, default=1.0, help="mood strength 0..1")
+    ap.add_argument("--moods", action="store_true", help=f"same line in every mood: {', '.join(EMOTIONS)}")
     ap.add_argument("-o", "--out", default="out.wav")
     ap.add_argument("--export-bank", metavar="DIR", help="write every voice's vowel WAVs to DIR")
     args = ap.parse_args(argv)
@@ -95,10 +111,14 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("text is required")
 
     kw = dict(speed=args.speed, mode=args.mode)
-    if args.cast:
-        samples = render_cast(args.text, list(CAST.values()), **kw)
+    if args.moods:
+        samples = render_moods(args.text, get_voice(args.voice), mood_amount=args.mood_amount, **kw)
+    elif args.cast:
+        samples = render_cast(args.text, list(CAST.values()), mood=args.mood,
+                              mood_amount=args.mood_amount, **kw)
     else:
-        samples = render_line(args.text, get_voice(args.voice), **kw)
+        samples = render_line(args.text, get_voice(args.voice), mood=args.mood,
+                              mood_amount=args.mood_amount, **kw)
     write_wav(args.out, samples)
     print(f"wrote {args.out} ({len(samples) / SR:.2f}s)")
     return 0

@@ -6,6 +6,7 @@ Space / Enter : skip typing, or go to next line
 1-6           : replay current line with another voice
 R             : replay
 - / =         : slower / faster
+E             : cycle mood (script / neutral / happy / sad / angry / scared / surprised / tired)
 M             : switch mode (voice / beep / random-beep) to hear the baselines
 Esc           : quit
 """
@@ -18,12 +19,13 @@ import re
 import sys
 
 SCRIPT = [
-    ("guard", "Halt! Who goes there? State your business, traveler."),
-    ("lady", "Oh, you must be the new courier. Sister Agnes has been waiting for you."),
-    ("child", "Are you a REAL adventurer? Can I see your sword?"),
-    ("pirate", "Arr, the sea be calm tonight... too calm, if ye ask me."),
-    ("elder", "In my day, we walked to the temple. Uphill. Both ways."),
-    ("cat", "Mrrow.{purr} Hello, human. Feed me, or else!"),
+    ("guard", "{mood:angry}Halt! Who goes there? State your business, traveler."),
+    ("lady", "{mood:happy}Oh, you must be the new courier! Sister Agnes has been waiting for you."),
+    ("child", "{mood:surprised}Are you a REAL adventurer? Can I see your sword?"),
+    ("pirate", "{mood:tired}Arr, the sea be calm tonight... too calm, if ye ask me."),
+    ("elder", "{mood:sad}In my day, we walked to the temple. {mood:happy:0.6}But oh, what a view."),
+    ("lady", "{mood:scared}Did you hear that? Something is out there, in the dark."),
+    ("cat", "Mrrow.{purr} Hello, human. {mood:angry:0.7}Feed me, or else!"),
     ("guard", "Welcome back, friend. The road ahead is long, but the stars are bright."),
     ("lady", "Welcome back, friend. The road ahead is long, but the stars are bright."),
     ("elder", "Welcome back, friend. The road ahead is long, but the stars are bright."),
@@ -55,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
 
     import pygame
 
+    from vocoid.emotion import EMOTIONS
     from vocoid.engine import Typewriter, VoiceHit
     from vocoid.player import Player
     from vocoid.voice import CAST
@@ -70,12 +73,18 @@ def main(argv: list[str] | None = None) -> int:
 
     line_i, mode_i = 0, 0
     speed = 1.0
+    moods = ["script"] + list(EMOTIONS)
+    mood_i = 0
     voice = CAST[SCRIPT[0][0]]
 
     def start(v):
         nonlocal voice
         voice = v
-        return Typewriter(SCRIPT[line_i][1], v, speed)
+        line = SCRIPT[line_i][1]
+        if mood_i:  # override: drop the script's mood tags, use the chosen mood
+            line = re.sub(r"\{mood:[^}]*\}", "", line)
+            return Typewriter(line, v, speed, moods[mood_i])
+        return Typewriter(line, v, speed)
 
     tw = start(voice)
     spans = wrap_spans(tw.text, font, BOX[2] - 40)
@@ -103,6 +112,9 @@ def main(argv: list[str] | None = None) -> int:
                     faster = ev.key in (pygame.K_EQUALS, pygame.K_KP_PLUS)
                     speed = min(3.0, speed * 1.15) if faster else max(0.3, speed / 1.15)
                     tw = start(voice)
+                elif ev.key == pygame.K_e:
+                    mood_i = (mood_i + 1) % len(moods)
+                    tw = start(voice)
                 elif ev.key == pygame.K_m:
                     mode_i = (mode_i + 1) % len(MODES)
                     tw = start(voice)
@@ -128,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         keys = "  ".join(f"{i + 1}:{v.name}" for i, v in enumerate(voices))
         hint = f"Space next/skip   R replay   M mode [{MODES[mode_i]}]   {keys}"
         screen.blit(small.render(hint, True, (140, 135, 170)), (30, 20))
-        status = f"line {line_i + 1}/{len(SCRIPT)}   speed x{speed:.2f}  (- slower, = faster)"
+        status = (f"line {line_i + 1}/{len(SCRIPT)}   speed x{speed:.2f}  (- slower, = faster)"
+                  f"   E mood [{moods[mood_i]}]")
         screen.blit(small.render(status, True, (140, 135, 170)), (30, 44))
         pygame.display.flip()
 

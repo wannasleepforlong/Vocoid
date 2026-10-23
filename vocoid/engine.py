@@ -9,7 +9,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from vocoid.text.markup import parse_markup
+from vocoid.emotion import NEUTRAL, Emotion, get_emotion
+from vocoid.text.markup import parse_tags
 from vocoid.text.prosody import plan_line, split_phrases
 from vocoid.text.rhythm import timeline
 from vocoid.text.syllables import find_syllables
@@ -33,6 +34,7 @@ class VoiceHit:
     duration: float            # seconds
     glide_from: float | None   # previous syllable's pitch in the same phrase, else None
     vowel_end: str | None = None  # diphthong target ("right" = ah -> ee)
+    emotion: Emotion = NEUTRAL
 
 
 @dataclass(frozen=True)
@@ -46,29 +48,43 @@ Event = CharRevealed | VoiceHit | SfxHit
 
 
 class Typewriter:
-    def __init__(self, line: str, voice: Voice, speed: float = 1.0):
-        self.text, self.sfx = parse_markup(line)
+    def __init__(self, line: str, voice: Voice, speed: float = 1.0,
+                 mood: str | Emotion | None = None, mood_amount: float = 1.0):
+        """mood = default mood for the line; {mood:x} tags in the line override it from that point."""
+        tags = parse_tags(line)
+        self.text, self.sfx = tags.text, tags.sfx
         self.voice = voice
         self.speed = speed * voice.rate
+        self._mood_marks = sorted((i, get_emotion(name, amt)) for i, (name, amt) in tags.moods.items())
+        self.default_mood = get_emotion(mood, mood_amount)
         self.revealed = 0
         self.clock = 0.0
         self.hits, self.char_times = self._schedule()
 
+    def mood_at(self, index: int) -> Emotion:
+        mood = self.default_mood
+        for i, e in self._mood_marks:
+            if i > index:
+                break
+            mood = e
+        return mood
+
     def _schedule(self) -> tuple[dict[int, VoiceHit], list[float]]:
         syllables = find_syllables(self.text)
-        notes = plan_line(self.text, syllables)
+        notes = plan_line(self.text, syllables, self.mood_at)
         by_index = {s.index: s for s in syllables}
-        sounds, char_times = timeline(self.text, syllables, notes, split_phrases(self.text), self.speed)
+        sounds, char_times = timeline(self.text, syllables, notes, split_phrases(self.text),
+                                      self.speed, self.mood_at)
         v = self.voice
         hits: dict[int, VoiceHit] = {}
         prev = None
         for i in sorted(sounds):
-            note, snd = notes[i], sounds[i]
-            ratio = max(0.5, 1.0 + note.pitch * v.pitch_range)
+            note, snd, mood = notes[i], sounds[i], self.mood_at(i)
+            ratio = max(0.5, mood.pitch * (1.0 + note.pitch * v.pitch_range * mood.range))
             # pitch flows on within a phrase; after punctuation it starts fresh
             glide = prev[1] if prev is not None and prev[0] == note.phrase else None
-            hits[i] = VoiceHit(snd.time, i, note.vowel, ratio, note.gain * v.gain, snd.duration,
-                               glide, by_index[i].vowel_end)
+            hits[i] = VoiceHit(snd.time, i, note.vowel, ratio, note.gain * v.gain * mood.gain,
+                               snd.duration, glide, by_index[i].vowel_end, mood)
             prev = (note.phrase, ratio)
         return hits, char_times
 

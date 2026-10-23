@@ -11,6 +11,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from typing import Callable
+
+from vocoid.emotion import NEUTRAL, Emotion
 from vocoid.text.prosody import Note, Phrase
 from vocoid.text.syllables import Syllable
 
@@ -52,8 +55,10 @@ def syllable_length(s: Syllable, final: bool) -> float:
 
 
 def timeline(text: str, syllables: list[Syllable], notes: dict[int, Note],
-             phrases: list[Phrase], speed: float = 1.0) -> tuple[dict[int, Sound], list[float]]:
+             phrases: list[Phrase], speed: float = 1.0,
+             mood_at: Callable[[int], Emotion] | None = None) -> tuple[dict[int, Sound], list[float]]:
     """Returns (sound per syllable char index, reveal time per char)."""
+    mood_at = mood_at or (lambda i: NEUTRAL)
     by_index = {s.index: s for s in syllables}
     sounds: dict[int, Sound] = {}
     anchors: list[tuple[int, float]] = []
@@ -62,15 +67,17 @@ def timeline(text: str, syllables: list[Syllable], notes: dict[int, Note],
         idx = sorted(i for i in notes if ph.start <= i < ph.end)
         for i in idx:
             s = by_index[i]
-            d = syllable_length(s, notes[i].final) / speed
-            start = t + min(MAX_GAP, VOICELESS_GAP * s.voiceless_onset) / speed
-            end = t + d - min(MAX_GAP, VOICELESS_GAP * s.voiceless_coda) / speed + OVERLAP
+            sp = speed * mood_at(i).rate
+            d = syllable_length(s, notes[i].final) / sp
+            start = t + min(MAX_GAP, VOICELESS_GAP * s.voiceless_onset) / sp
+            end = t + d - min(MAX_GAP, VOICELESS_GAP * s.voiceless_coda) / sp + OVERLAP
             sounds[i] = Sound(i, start, max(MIN_SOUND, end - start))
             anchors.append((i, start))
             t += d
         if ph.end < len(text):
             anchors.append((ph.end, t))  # punctuation shows as the phrase finishes, then the pause
-        t += PAUSE.get(ph.kind, 0.0) / speed
+        mood = mood_at(max(ph.start, ph.end - 1))
+        t += PAUSE.get(ph.kind, 0.0) * mood.pause / (speed * mood.rate)
 
     n = len(text)
     if not n:

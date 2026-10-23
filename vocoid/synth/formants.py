@@ -18,6 +18,9 @@ VOWELS: dict[str, tuple[float, float, float]] = {
     "er": (490, 1350, 1690),   # her
 }
 BANDWIDTHS = (80.0, 100.0, 140.0)
+# F4, F5: roughly the same for every vowel. Without them everything above ~3 kHz collapses
+# (three cascaded resonators roll off steeply) and the voice sounds muffled.
+HIGHER_FORMANTS = ((3500.0, 200.0), (4500.0, 250.0))
 
 NEUTRAL_F2 = 1150.0  # where F2 drifts when the mouth barely opens
 BLOCK = 32           # samples per filter update when formants move
@@ -49,7 +52,8 @@ def formants_for(vowel: str, tube_scale: float = 1.0, mouth_closed: float = 0.0,
     f2 += (NEUTRAL_F2 - f2) * 0.45 * m
     f3 *= 1 - 0.05 * m
     out = []
-    for f, bw in zip((f1, f2, f3), BANDWIDTHS):
+    bands = list(zip((f1, f2, f3), BANDWIDTHS)) + list(HIGHER_FORMANTS)
+    for f, bw in bands:
         f *= tube_scale
         bw *= (1 + 0.8 * m) * (0.5 + 0.5 * tube_scale)
         if sr is not None:
@@ -61,7 +65,7 @@ def formants_for(vowel: str, tube_scale: float = 1.0, mouth_closed: float = 0.0,
 def apply_tract(x: np.ndarray, vowel: str, sr: int, tube_scale: float = 1.0,
                 mouth_closed: float = 0.0, vowel_end: str | None = None,
                 glide: tuple[float, float] = (0.3, 0.8)) -> np.ndarray:
-    """Pass the buzz through three cascaded resonators.
+    """Pass the buzz through five cascaded resonators (F1-F3 = vowel, F4-F5 = presence).
 
     With vowel_end, the mouth slides from vowel to vowel_end between glide[0] and glide[1]
     of the sound (e.g. "right" = ah -> ee). Filters update every BLOCK samples, keeping state.
